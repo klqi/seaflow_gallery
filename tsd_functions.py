@@ -187,20 +187,11 @@ def plot_diel_cycle(seasonal_df, trend_df, diel_df, cruise_name):
     # plot latitude
     ln1=axs[2].plot(diel_df['time'], diel_df['lat'], c='red', alpha=0.5, label='Latitude')
     # calculate par from diel df
-    par_df, day_inds = calc_daily_vars(diel_df, col='par', func='sum')
+    par_df, day_inds = calc_daily_vars(diel_df, col='par', func='mean')
     # plot PAR on secodnary axis
     ax2 = axs[2].twinx()
-    ln2=ax2.plot(par_df['time'], par_df['par_sum'], c='orange', alpha=0.5, marker='.', label='Total Daily Par')
+    ln2=ax2.plot(par_df['time'], par_df['par_new'], c='orange', alpha=0.5, marker='.', label='Total Daily Par')
 
-    ###### move this into panels to the next column from data in the future (deprecated for now) #########
-    # pro_bio = np.log(get_trend_only(diel_df, 
-    #               pop='prochloro',
-    #               col='biomass'))
-    # syn_bio = np.log(get_trend_only(syn_diel, 
-    #               pop='synecho',
-    #               col='biomass'))
-    # ln3=ax2.plot(diel_df['time'],pro_bio.values, alpha=0.5, label='Pro', linestyle=':')
-    # ln4=ax2.plot(syn_diel['time'],syn_bio.values, c='g', alpha=0.5, label='Syn', linestyle=':')
     # add legend for panel
     lns = ln1+ln2#+ln3+ln4
     labs = [l.get_label() for l in lns]
@@ -220,22 +211,27 @@ def plot_diel_cycle(seasonal_df, trend_df, diel_df, cruise_name):
     # axs[0].set_ylim([0.85, 1.25])
     # axs[1].set_ylim([0.85, 1.25])
     # fix for diam- pro
-    ax0.set_ylim([0, 0.1])
+    ax0.set_ylim([0.4, 0.85])
     # syn
-    ax1.set_ylim([0, 1])
+    ax1.set_ylim([0.7, 1.3])
     # aesthetics
     plt.tight_layout()
     # return figure
     return(fig)
-    
+
 # function to run the TSD model and output results
 # input: df = input dataframe for cruise, show_figs = show plots or not (default False)
 def run_TSD(df, cruise_name, show_tsd_figs=False,):
+    # sort df by time first
+    
     # run interpolation helper function (linear)
     pro_res = interp_by_time(df, 'prochloro')
     syn_res = interp_by_time(df, 'synecho')
     # run find night to get day/night and sunrise/sunset hours
-    diel_df = find_night(pd.concat([pro_res, syn_res])).drop_duplicates(subset=['time', 'lat', 'lon']).reset_index()
+    diel_df = find_night(pd.concat([pro_res, 
+                                    syn_res])).drop_duplicates(subset=['time', 
+                                                                        'lat', 
+                                                                        'lon']).sort_values(by='time').reset_index()
     # run seasonal decompose on interpolated df
     result_pro = seasonal_decompose(pro_res['diam_med'], model='multiplicative', period=24)
     result_syn = seasonal_decompose(syn_res['diam_med'], model='multiplicative', period=24)
@@ -365,3 +361,63 @@ def component_strength(resid_df, s_df, t_df, cruise_name):
     plt.rcParams.update({'font.size':15})
     # returns the dataframe with calculated strength components (Fs, Ft) and resulting figure
     return(group_resid, fig)
+
+
+## helper function to create proxies for growth curves from the seasonal component of tsd model against cmap covariates. 
+## so far, this runs for PAR and temperature. 
+# inputs: cruises = list of dataframes of cruises to run (cruises must be a LIST of dataframes of different cruises! 
+# it reads cruises one at a time per dataframe!), names = list of names of cruises, linreg = boolean to display linear 
+# trendline or not
+def amp_temp(cruises, names, linreg=False):
+    total_cruises = []
+    for cruise, name in zip(cruises, names):
+        print(name)
+        ###### EDGE CASES TO SKIP ######
+        # if pro not in, skip
+        if ((['prochloro']) not in pd.unique(cruise['pop'])):
+            continue
+        # if length of cruise too short, skip
+        if ((len(cruise[cruise['pop']=='prochloro']) < 48) | (len(cruise[cruise['pop']=='synecho']) < 48)):
+            continue
+        # cruises that just don't work
+        if ((name=='KM1802') | (name=='HOT299') | (name=='HOT318') | (name=='KM2001')):
+            continue
+        ################################
+        seasonal, trend, resid, diel, plot0=run_TSD(cruise, name, False)
+        plt.close()
+        cruise_seas = summarize_by_pop_time(seasonal, 'seasonal')
+        # find days by cruise defined by sunrise
+        sr_days = days_by_sunrise(diel).drop(columns=['pop'])
+        # merge with output of sunrise days to get cruise days defined by sunrise
+        cruise_daily = cruise_seas.merge(sr_days, on='time',how='left')
+        # groupby sunrise days with environmental data
+        group_cruise = cruise_daily.groupby(['cruise_day', 'pop']).agg({
+            'seasonal mean': ['max', 'min'],
+            'seasonal std': 'count',
+            'temp': 'mean',
+            'par':'mean'
+        }).reset_index()
+        group_cruise.columns = [''.join(col).strip() for col in group_cruise.columns.values]
+        group_cruise = group_cruise.loc[group_cruise['seasonal stdcount']==24]
+        # do some renaming
+        group_cruise.rename(columns={'tempmean':'temp','parmean':'par'},inplace=True)
+        # calculate amplitude by just taking difference (A1 for now)
+        group_cruise['amp'] = np.abs(group_cruise['seasonal meanmax']) - np.abs(group_cruise['seasonal meanmin'])
+        # add cruise name
+        group_cruise['cruise'] = name
+        total_cruises.append(group_cruise)
+    all_dat = pd.concat(total_cruises)
+    melt_dat = pd.melt(all_dat, id_vars=['cruise_day','pop','seasonal meanmax','cruise','amp'], 
+                       value_vars=['temp', 'par'],
+        var_name='var', value_name='val')
+    fig = sns.lmplot(
+        data=melt_dat, x="val", y="amp",
+        hue="cruise", row="pop", col='var',height=4, sharey=False, fit_reg=linreg, sharex=False
+    )
+    sns.move_legend(fig, "upper left", bbox_to_anchor=(1, 1))
+    fig.axes[1,0].set_xlabel('Temperature')
+    fig.axes[1,1].set_xlabel('PAR')
+    [plt.setp(ax.texts, text="") for ax in fig.axes.flat] 
+    fig.set_titles('{row_name}')
+    plt.tight_layout()
+    return(melt_dat)

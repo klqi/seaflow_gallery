@@ -155,7 +155,7 @@ def find_night(df):
         df.drop(columns=['index'], inplace=True)
     df = df[df['lat'].notnull()].reset_index()#.drop(columns=['index'])
     # offset by 1 day
-    df['time_day'] = df['time'].dt.round('1d') - pd.DateOffset(1)
+    df['time_day'] = df['time'].dt.round('1d') #- pd.DateOffset(1)
     df['night'] = 'nan'
 
     # loooooop thru whee! (using sunrise/sunset is better than dawn/dusk- why?)
@@ -242,6 +242,48 @@ def calc_daily_vars(diel_df, col, func='sum'):
     daily_par = pd.DataFrame()
     # time is at sunset, end of the day
     daily_par['time'] = sunset
-    daily_par['par_sum']= par_sum
+    daily_par['par_new']= par_sum
     # return daily par values and day indices
     return(daily_par, days)
+
+## helper function to calculate slope over a certain number of hours
+# input: hours = int to specify how many hours to shift by, col = column to find slope for
+def calc_slope(hours, col):
+    return((col-col.shift(hours)).fillna(0)/hours)
+
+## helper function to categorize cruise days by sunrise and sunset by using a solar calculator, instead of by
+# time (in UTC). 
+# input: diel_df = dataframe with 'night' column specififying whether the sample was collected at 
+# sunrise/sunset/day/night
+def days_by_sunrise(diel_df):
+    # find times for each sunrise 
+    dd = diel_df.loc[diel_df['night']=='sunrise']
+    # implement row iterator to check next row
+    row_iterator = dd.iterrows()
+    _, last_row = next(row_iterator)
+    # keep track of days
+    count = 0
+    diel_df['cruise_day'] = 0
+    # loop through to find indices with day
+    for i, row in row_iterator:
+        # if the cruise did not start at sunrise, include day 0 as a partial day
+        if (count == 0)&(diel_df.loc[count,'night']!='sunrise'):
+            # get indices for day 0
+            inds = np.arange(0, last_row.name+1)
+            # set indices to day 0
+            diel_df.loc[inds,'cruise_day']=count
+            count+=1
+        # else go through the rest of each day
+        if(count>0):
+            # starting at sunrise, save index until the next sunrise
+            inds = np.arange(last_row.name, row.name+1)
+            # save day as count number
+            diel_df.loc[inds,'cruise_day']=count
+            count+=1
+            last_row = row
+        # are we at the last row?
+        if (count==len(dd)):
+            # set the remaining days to the count
+            inds = np.arange(last_row.name, len(diel_df))
+            diel_df.loc[inds,'cruise_day']=count+1
+    return(diel_df)
