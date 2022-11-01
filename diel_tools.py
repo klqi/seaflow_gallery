@@ -155,7 +155,7 @@ def find_night(df):
         df.drop(columns=['index'], inplace=True)
     df = df[df['lat'].notnull()].reset_index()#.drop(columns=['index'])
     # offset by 1 day
-    df['time_day'] = df['time'].dt.round('1d') - pd.DateOffset(1)
+    df['time_day'] = df['time'].dt.round('1d') #- pd.DateOffset(1)
     df['night'] = 'nan'
 
     # loooooop thru whee! (using sunrise/sunset is better than dawn/dusk- why?)

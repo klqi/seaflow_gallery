@@ -7,7 +7,8 @@ import matplotlib.pyplot as plt
 from diel_tools import find_night
 import matplotlib.dates as mdates
 from datetime import timedelta
-from diel_tools import plotseasonal, calc_daily_vars
+from diel_tools import plotseasonal, calc_daily_vars, days_by_sunrise
+import seaborn as sns
 
 
 # helper function to interpolate data based on time
